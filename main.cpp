@@ -1,381 +1,269 @@
 #include <iostream>
-#include <conio.h>  // For _kbhit() and _getch()
-#include <windows.h> // For Sleep()
+#include <conio.h>
+#include <windows.h>
 #include <deque>
 #include <cstdlib>
 #include <ctime>
-
 using namespace std;
 
-// Cell class to represent a position on the grid
-class Cell {
-private:
-    int x, y;
+void setCursor(int x, int y) {
+    COORD c = {(SHORT)x, (SHORT)y};
+    SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), c);
+}
 
+void hideCursor() {
+    CONSOLE_CURSOR_INFO info = {100, FALSE};
+    SetConsoleCursorInfo(GetStdHandle(STD_OUTPUT_HANDLE), &info);
+}
+
+class Cell {
+    int x, y;
 public:
     Cell(int x = 0, int y = 0) : x(x), y(y) {}
-    
     int getX() const { return x; }
     int getY() const { return y; }
-    
-    void setX(int newX) { x = newX; }
-    void setY(int newY) { y = newY; }
-    
-    bool equals(const Cell& other) const {
-        return x == other.x && y == other.y;
-    }
+    void setX(int nx) { x = nx; }
+    void setY(int ny) { y = ny; }
+    bool equals(const Cell& o) const { return x == o.x && y == o.y; }
 };
 
-// Direction enum
-enum Direction {
-    UP,
-    DOWN,
-    LEFT,
-    RIGHT
-};
+enum Direction { UP, DOWN, LEFT, RIGHT };
 
-// Snake class using deque (double-ended queue)
 class Snake {
-private:
     deque<Cell> body;
-    Direction currentDirection;
-    Direction nextDirection;
+    Direction dir, nextDir;
     bool growing;
-
 public:
-    Snake(int startX, int startY) {
-        // Initialize snake with 3 cells
-        body.push_back(Cell(startX, startY));
-        body.push_back(Cell(startX - 1, startY));
-        body.push_back(Cell(startX - 2, startY));
-        
-        currentDirection = RIGHT;
-        nextDirection = RIGHT;
-        growing = false;
+    Snake(int x, int y) : dir(RIGHT), nextDir(RIGHT), growing(false) {
+        body.push_back(Cell(x, y));
+        body.push_back(Cell(x-1, y));
+        body.push_back(Cell(x-2, y));
     }
     
-    Cell getHead() const {
-        return body.front();
-    }
+    Cell getHead() const { return body.front(); }
+    const deque<Cell>& getBody() const { return body; }
     
-    const deque<Cell>& getBody() const {
-        return body;
-    }
-    
-    void setDirection(Direction dir) {
-        // Prevent 180-degree turns
-        if ((currentDirection == UP && dir == DOWN) ||
-            (currentDirection == DOWN && dir == UP) ||
-            (currentDirection == LEFT && dir == RIGHT) ||
-            (currentDirection == RIGHT && dir == LEFT)) {
-            return;
-        }
-        nextDirection = dir;
+    void setDirection(Direction d) {
+        if ((dir == UP && d == DOWN) || (dir == DOWN && d == UP) ||
+            (dir == LEFT && d == RIGHT) || (dir == RIGHT && d == LEFT)) return;
+        nextDir = d;
     }
     
     void move() {
-        currentDirection = nextDirection;
-        Cell head = getHead();
-        Cell newHead = head;
+        dir = nextDir;
+        Cell head = getHead(), newHead = head;
+        if (dir == UP) newHead.setY(head.getY()-1);
+        else if (dir == DOWN) newHead.setY(head.getY()+1);
+        else if (dir == LEFT) newHead.setX(head.getX()-1);
+        else newHead.setX(head.getX()+1);
         
-        // Calculate new head position based on direction
-        switch (currentDirection) {
-            case UP:    newHead.setY(head.getY() - 1); break;
-            case DOWN:  newHead.setY(head.getY() + 1); break;
-            case LEFT:  newHead.setX(head.getX() - 1); break;
-            case RIGHT: newHead.setX(head.getX() + 1); break;
-        }
-        
-        // Add new head to front (enqueue)
         body.push_front(newHead);
-        
-        // Remove tail if not growing (dequeue)
-        if (!growing) {
-            body.pop_back();
-        } else {
-            growing = false;
-        }
+        if (!growing) body.pop_back();
+        else growing = false;
     }
     
-    void grow() {
-        growing = true;
-    }
+    void grow() { growing = true; }
     
-    bool checkSelfCollision() const {
+    bool checkCollision() const {
         Cell head = getHead();
-        for (size_t i = 1; i < body.size(); i++) {
-            if (head.equals(body[i])) {
-                return true;
-            }
-        }
+        for (size_t i = 1; i < body.size(); i++)
+            if (head.equals(body[i])) return true;
         return false;
     }
     
-    bool isOccupying(const Cell& cell) const {
-        for (const auto& segment : body) {
-            if (segment.equals(cell)) {
-                return true;
-            }
-        }
+    bool isOn(const Cell& c) const {
+        for (const auto& s : body)
+            if (s.equals(c)) return true;
         return false;
     }
 };
 
-// Food class
 class Food {
-private:
-    Cell position;
-
+    Cell pos;
 public:
-    Food() : position(0, 0) {}
-    
-    void spawn(const Snake& snake, int gridSize) {
-        // Ensure food doesn't spawn on snake's body
-        bool validPosition = false;
-        int attempts = 0;
-        
-        while (!validPosition && attempts < 100) {
-            int x = rand() % gridSize;
-            int y = rand() % gridSize;
-            position = Cell(x, y);
-            
-            if (!snake.isOccupying(position)) {
-                validPosition = true;
-            }
-            attempts++;
+    Food() : pos(0, 0) {}
+    void spawn(const Snake& s, int size) {
+        for (int i = 0; i < 100; i++) {
+            pos = Cell(rand() % size, rand() % size);
+            if (!s.isOn(pos)) break;
         }
     }
-    
-    Cell getPosition() const {
-        return position;
-    }
+    Cell getPos() const { return pos; }
 };
 
-// GameBoard class to manage the game
-class GameBoard {
-private:
-    int gridSize;
+class Game {
+    int size, score, highScore, speed;
     Snake* snake;
     Food* food;
-    int score;
-    int highScore;
-    bool gameOver;
-    bool paused;
-    int speed;
-
+    bool over, paused, first;
+    char prev[25][25];
+    
 public:
-    GameBoard(int size) : gridSize(size), score(0), highScore(0), 
-                          gameOver(false), paused(false), speed(100) {
-        snake = new Snake(size / 2, size / 2);
+    Game(int sz) : size(sz), score(0), highScore(0), speed(100),
+                   over(false), paused(false), first(true) {
+        snake = new Snake(sz/2, sz/2);
         food = new Food();
-        food->spawn(*snake, gridSize);
+        food->spawn(*snake, size);
+        for (int i = 0; i < 25; i++)
+            for (int j = 0; j < 25; j++)
+                prev[i][j] = ' ';
     }
     
-    ~GameBoard() {
-        delete snake;
-        delete food;
-    }
+    ~Game() { delete snake; delete food; }
     
-    void processInput() {
+    void input() {
         if (_kbhit()) {
-            char key = _getch();
-            
-            // Handle arrow keys (they send two characters)
-            if (key == -32 || key == 0) {
-                key = _getch();
-                switch (key) {
-                    case 72: snake->setDirection(UP); break;    // Up arrow
-                    case 80: snake->setDirection(DOWN); break;  // Down arrow
-                    case 75: snake->setDirection(LEFT); break;  // Left arrow
-                    case 77: snake->setDirection(RIGHT); break; // Right arrow
-                }
+            char k = _getch();
+            if (k == -32 || k == 0) {
+                k = _getch();
+                if (k == 72) snake->setDirection(UP);
+                else if (k == 80) snake->setDirection(DOWN);
+                else if (k == 75) snake->setDirection(LEFT);
+                else if (k == 77) snake->setDirection(RIGHT);
             } else {
-                // WASD controls
-                switch (key) {
-                    case 'w': case 'W': snake->setDirection(UP); break;
-                    case 's': case 'S': snake->setDirection(DOWN); break;
-                    case 'a': case 'A': snake->setDirection(LEFT); break;
-                    case 'd': case 'D': snake->setDirection(RIGHT); break;
-                    case 'p': case 'P': paused = !paused; break;
-                    case 27: gameOver = true; break; // ESC key
-                }
+                if (k == 'w' || k == 'W') snake->setDirection(UP);
+                else if (k == 's' || k == 'S') snake->setDirection(DOWN);
+                else if (k == 'a' || k == 'A') snake->setDirection(LEFT);
+                else if (k == 'd' || k == 'D') snake->setDirection(RIGHT);
+                else if (k == 'p' || k == 'P') paused = !paused;
+                else if (k == 27) over = true;
             }
         }
     }
     
     void update() {
-        if (paused || gameOver) return;
-        
+        if (paused || over) return;
         snake->move();
-        
-        // Check collision with boundaries
-        Cell head = snake->getHead();
-        if (head.getX() < 0 || head.getX() >= gridSize ||
-            head.getY() < 0 || head.getY() >= gridSize) {
-            gameOver = true;
+        Cell h = snake->getHead();
+        if (h.getX() < 0 || h.getX() >= size || h.getY() < 0 || h.getY() >= size) {
+            over = true;
             return;
         }
-        
-        // Check self collision
-        if (snake->checkSelfCollision()) {
-            gameOver = true;
+        if (snake->checkCollision()) {
+            over = true;
             return;
         }
-        
-        // Check if snake ate food
-        if (head.equals(food->getPosition())) {
+        if (h.equals(food->getPos())) {
             snake->grow();
             score += 10;
-            
-            // Increase speed slightly
-            if (speed > 50) {
-                speed -= 2;
-            }
-            
-            food->spawn(*snake, gridSize);
+            if (speed > 50) speed -= 2;
+            food->spawn(*snake, size);
         }
     }
     
-    void render() {
-        system("cls"); // Clear screen
-        
-        // Display title and score
-        cout << "======================================================\n";
-        cout << "            SNAKE GAME - IT603 PROJECT               \n";
-        cout << "======================================================\n";
-        cout << "Score: " << score << "  |  High Score: " << highScore;
-        if (paused) cout << "  |  [PAUSED]";
-        cout << "\n\n";
-        
-        // Create grid (2D array representation)
+    void draw() {
         char grid[25][25];
-        
-        // Initialize grid with empty spaces
-        for (int i = 0; i < gridSize; i++) {
-            for (int j = 0; j < gridSize; j++) {
+        for (int i = 0; i < size; i++)
+            for (int j = 0; j < size; j++)
                 grid[i][j] = ' ';
-            }
-        }
         
-        // Place food
-        Cell foodPos = food->getPosition();
-        grid[foodPos.getY()][foodPos.getX()] = '*';
+        Cell fp = food->getPos();
+        grid[fp.getY()][fp.getX()] = '*';
         
-        // Place snake
         const deque<Cell>& body = snake->getBody();
         for (size_t i = 0; i < body.size(); i++) {
-            Cell segment = body[i];
-            if (i == 0) {
-                grid[segment.getY()][segment.getX()] = 'O'; // Head
-            } else {
-                grid[segment.getY()][segment.getX()] = 'o'; // Body
+            Cell s = body[i];
+            grid[s.getY()][s.getX()] = (i == 0) ? 'O' : 'o';
+        }
+        
+        if (first) {
+            system("cls");
+            cout << "==================================================\n";
+            cout << "          SNAKE GAME - IT603 PROJECT             \n";
+            cout << "==================================================\n";
+            cout << "Score: " << score << "  |  High: " << highScore;
+            if (paused) cout << " [PAUSED]";
+            cout << "\n\n+";
+            for (int i = 0; i < size; i++) cout << "-";
+            cout << "+\n";
+            for (int i = 0; i < size; i++) {
+                cout << "|";
+                for (int j = 0; j < size; j++) cout << grid[i][j];
+                cout << "|\n";
+            }
+            cout << "+";
+            for (int i = 0; i < size; i++) cout << "-";
+            cout << "+\n\nW/A/S/D or Arrows | P=Pause | ESC=Exit\n";
+            first = false;
+        } else {
+            setCursor(0, 3);
+            cout << "Score: " << score << "  |  High: " << highScore;
+            if (paused) cout << " [PAUSED]  ";
+            else cout << "           ";
+            for (int i = 0; i < size; i++) {
+                for (int j = 0; j < size; j++) {
+                    if (grid[i][j] != prev[i][j]) {
+                        setCursor(j+1, i+6);
+                        cout << grid[i][j];
+                    }
+                }
             }
         }
         
-        // Draw grid with borders
-        cout << "+";
-        for (int i = 0; i < gridSize; i++) cout << "-";
-        cout << "+\n";
-        
-        for (int i = 0; i < gridSize; i++) {
-            cout << "|";
-            for (int j = 0; j < gridSize; j++) {
-                cout << grid[i][j];
-            }
-            cout << "|\n";
-        }
-        
-        cout << "+";
-        for (int i = 0; i < gridSize; i++) cout << "-";
-        cout << "+\n";
-        
-        // Display controls
-        cout << "\nControls: W/A/S/D or Arrow Keys to move\n";
-        cout << "          P to Pause  |  ESC to Exit\n";
+        for (int i = 0; i < size; i++)
+            for (int j = 0; j < size; j++)
+                prev[i][j] = grid[i][j];
     }
     
-    void displayGameOver() {
+    void gameOver() {
         system("cls");
-        cout << "\n\n";
-        cout << "======================================================\n";
-        cout << "                    GAME OVER!                       \n";
-        cout << "======================================================\n\n";
-        cout << "        Final Score: " << score << "\n";
-        cout << "        High Score:  " << highScore << "\n\n";
-        cout << "        Press 'R' to Restart or 'Q' to Quit\n\n";
-        
-        if (score > highScore) {
-            highScore = score;
-        }
+        if (score > highScore) highScore = score;
+        cout << "\n\n==================================================\n";
+        cout << "                  GAME OVER!                     \n";
+        cout << "==================================================\n\n";
+        cout << "    Final Score: " << score << "\n";
+        cout << "    High Score: " << highScore << "\n\n";
+        cout << "    Press R to Restart or Q to Quit\n\n";
     }
     
-    bool isGameOver() const {
-        return gameOver;
-    }
-    
-    bool isPaused() const {
-        return paused;
-    }
-    
-    int getSpeed() const {
-        return speed;
-    }
+    bool isOver() const { return over; }
+    int getSpeed() const { return speed; }
     
     void reset() {
         delete snake;
         delete food;
-        
-        snake = new Snake(gridSize / 2, gridSize / 2);
+        snake = new Snake(size/2, size/2);
         food = new Food();
-        food->spawn(*snake, gridSize);
-        
+        food->spawn(*snake, size);
         score = 0;
-        gameOver = false;
-        paused = false;
+        over = paused = false;
+        first = true;
         speed = 100;
-    }
-    
-    int getHighScore() const {
-        return highScore;
+        for (int i = 0; i < 25; i++)
+            for (int j = 0; j < 25; j++)
+                prev[i][j] = ' ';
     }
 };
 
 int main() {
-    srand(static_cast<unsigned>(time(0)));
+    srand(time(0));
+    hideCursor();
+    Game game(20);
     
-    const int GRID_SIZE = 20;
-    GameBoard game(GRID_SIZE);
-    
-    cout << "======================================================\n";
-    cout << "         Welcome to Snake Game - IT603!              \n";
-    cout << "======================================================\n\n";
+    cout << "==================================================\n";
+    cout << "       Welcome to Snake Game - IT603!           \n";
+    cout << "==================================================\n\n";
     cout << "Instructions:\n";
-    cout << "- Use W/A/S/D or Arrow Keys to control the snake\n";
-    cout << "- Eat food (*) to grow and increase score\n";
-    cout << "- Avoid hitting walls or yourself\n";
-    cout << "- Press P to pause, ESC to exit\n\n";
+    cout << "- W/A/S/D or Arrow Keys to move\n";
+    cout << "- Eat food (*) to grow\n";
+    cout << "- Avoid walls and yourself\n";
+    cout << "- P=Pause | ESC=Exit\n\n";
     cout << "Press any key to start...\n";
     _getch();
     
-    // Main game loop
     while (true) {
-        if (!game.isGameOver()) {
-            game.processInput();
+        if (!game.isOver()) {
+            game.input();
             game.update();
-            game.render();
+            game.draw();
             Sleep(game.getSpeed());
         } else {
-            game.displayGameOver();
-            
-            char choice = _getch();
-            if (choice == 'r' || choice == 'R') {
-                game.reset();
-            } else if (choice == 'q' || choice == 'Q') {
-                break;
-            }
+            game.gameOver();
+            char c = _getch();
+            if (c == 'r' || c == 'R') game.reset();
+            else if (c == 'q' || c == 'Q') break;
         }
     }
     
-    cout << "\nThanks for playing! Final High Score: " << game.getHighScore() << "\n";
     return 0;
 }
