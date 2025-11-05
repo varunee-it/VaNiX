@@ -1,19 +1,125 @@
 #include <iostream>
-#include <conio.h>
-#include <windows.h>
 #include <deque>
 #include <cstdlib>
 #include <ctime>
+
+#ifdef _WIN32
+    #include <conio.h>
+    #include <windows.h>
+    
+    void setColor(int color) {
+        SetConsoleTextAttribute(GetStdHandle(STD_OUTPUT_HANDLE), color);
+    }
+    
+    #define COLOR_RED 12
+    #define COLOR_GREEN 10
+    #define COLOR_YELLOW 14
+    #define COLOR_CYAN 11
+    #define COLOR_WHITE 15
+    #define COLOR_MAGENTA 13
+    #define COLOR_BRIGHT_GREEN 10
+#else
+    #include <termios.h>
+    #include <unistd.h>
+    #include <fcntl.h>
+    #include <sys/ioctl.h>
+    
+    void setColor(int color) {
+        const char* colorCode;
+        switch(color) {
+            case 12: colorCode = "\033[91m"; break; // RED
+            case 10: colorCode = "\033[92m"; break; // GREEN
+            case 14: colorCode = "\033[93m"; break; // YELLOW
+            case 11: colorCode = "\033[96m"; break; // CYAN
+            case 15: colorCode = "\033[97m"; break; // WHITE
+            case 13: colorCode = "\033[95m"; break; // MAGENTA
+            default: colorCode = "\033[0m"; break;  // RESET
+        }
+        printf("%s", colorCode);
+        fflush(stdout);
+    }
+    
+    #define COLOR_RED 12
+    #define COLOR_GREEN 10
+    #define COLOR_YELLOW 14
+    #define COLOR_CYAN 11
+    #define COLOR_WHITE 15
+    #define COLOR_MAGENTA 13
+    #define COLOR_BRIGHT_GREEN 10
+    
+    // Global terminal settings for Linux
+    struct termios orig_termios;
+    bool termios_saved = false;
+    
+    void disableRawMode() {
+        if (termios_saved) {
+            tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
+        }
+    }
+    
+    void enableRawMode() {
+        if (!termios_saved) {
+            tcgetattr(STDIN_FILENO, &orig_termios);
+            atexit(disableRawMode);
+            termios_saved = true;
+        }
+        struct termios raw = orig_termios;
+        raw.c_lflag &= ~(ECHO | ICANON);
+        raw.c_cc[VMIN] = 0;
+        raw.c_cc[VTIME] = 0;
+        tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+    }
+    
+    int _kbhit() {
+        int byteswaiting;
+        ioctl(STDIN_FILENO, FIONREAD, &byteswaiting);
+        return byteswaiting;
+    }
+
+    char _getch() {
+        char ch;
+        read(STDIN_FILENO, &ch, 1);
+        return ch;
+    }
+#endif
+
 using namespace std;
 
 void setCursor(int x, int y) {
+#ifdef _WIN32
     COORD c = {(SHORT)x, (SHORT)y};
     SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), c);
+#else
+    printf("\033[%d;%dH", y + 1, x + 1);
+    fflush(stdout);
+#endif
 }
 
 void hideCursor() {
+#ifdef _WIN32
     CONSOLE_CURSOR_INFO info = {100, FALSE};
     SetConsoleCursorInfo(GetStdHandle(STD_OUTPUT_HANDLE), &info);
+#else
+    printf("\033[?25l");
+    fflush(stdout);
+#endif
+}
+
+void sleepMs(int ms) {
+#ifdef _WIN32
+    Sleep(ms);
+#else
+    usleep(ms * 1000);
+#endif
+}
+
+void clearScreen() {
+#ifdef _WIN32
+    system("cls");
+#else
+    printf("\033[2J\033[H");
+    fflush(stdout);
+#endif
 }
 
 class Cell {
@@ -42,6 +148,7 @@ public:
     
     Cell getHead() const { return body.front(); }
     const deque<Cell>& getBody() const { return body; }
+    Direction getDirection() const { return dir; }
     
     void setDirection(Direction d) {
         if ((dir == UP && d == DOWN) || (dir == DOWN && d == UP) ||
@@ -95,12 +202,12 @@ class Game {
     int size, score, highScore, speed;
     Snake* snake;
     Food* food;
-    bool over, paused, first;
+    bool over, first;
     char prev[25][25];
     
 public:
     Game(int sz) : size(sz), score(0), highScore(0), speed(100),
-                   over(false), paused(false), first(true) {
+                   over(false),first(true) {
         snake = new Snake(sz/2, sz/2);
         food = new Food();
         food->spawn(*snake, size);
@@ -114,6 +221,9 @@ public:
     void input() {
         if (_kbhit()) {
             char k = _getch();
+            
+            #ifdef _WIN32
+            // Windows arrow key handling
             if (k == -32 || k == 0) {
                 k = _getch();
                 if (k == 72) snake->setDirection(UP);
@@ -121,18 +231,34 @@ public:
                 else if (k == 75) snake->setDirection(LEFT);
                 else if (k == 77) snake->setDirection(RIGHT);
             } else {
+            #else
+            // Linux arrow key handling
+            if (k == 27) {  // ESC character
+                char next1 = _getch();
+                if (next1 == '[') {  // Arrow key sequence
+                    char next2 = _getch();
+                    if (next2 == 'A') snake->setDirection(UP);
+                    else if (next2 == 'B') snake->setDirection(DOWN);
+                    else if (next2 == 'C') snake->setDirection(RIGHT);
+                    else if (next2 == 'D') snake->setDirection(LEFT);
+                } else {
+                    over = true;  // ESC key pressed
+                }
+            } else {
+            #endif
                 if (k == 'w' || k == 'W') snake->setDirection(UP);
                 else if (k == 's' || k == 'S') snake->setDirection(DOWN);
                 else if (k == 'a' || k == 'A') snake->setDirection(LEFT);
                 else if (k == 'd' || k == 'D') snake->setDirection(RIGHT);
-                else if (k == 'p' || k == 'P') paused = !paused;
+                #ifdef _WIN32
                 else if (k == 27) over = true;
+                #endif
             }
         }
     }
     
     void update() {
-        if (paused || over) return;
+        if (over) return;
         snake->move();
         Cell h = snake->getHead();
         if (h.getX() < 0 || h.getX() >= size || h.getY() < 0 || h.getY() >= size) {
@@ -158,46 +284,116 @@ public:
                 grid[i][j] = ' ';
         
         Cell fp = food->getPos();
-        grid[fp.getY()][fp.getX()] = '*';
+        grid[fp.getY()][fp.getX()] = '@';
         
         const deque<Cell>& body = snake->getBody();
+        Direction dir = snake->getDirection();
+        
         for (size_t i = 0; i < body.size(); i++) {
             Cell s = body[i];
-            grid[s.getY()][s.getX()] = (i == 0) ? 'O' : 'o';
+            if (i == 0) {
+                // Snake head with direction indicator
+                if (dir == UP) grid[s.getY()][s.getX()] = '^';
+                else if (dir == DOWN) grid[s.getY()][s.getX()] = 'v';
+                else if (dir == LEFT) grid[s.getY()][s.getX()] = '<';
+                else grid[s.getY()][s.getX()] = '>';
+            } else {
+                grid[s.getY()][s.getX()] = 'o';
+            }
         }
         
         if (first) {
-            system("cls");
-            cout << "==================================================\n";
-            cout << "          SNAKE GAME - IT603 PROJECT             \n";
-            cout << "==================================================\n";
-            cout << "Score: " << score << "  |  High: " << highScore;
-            if (paused) cout << " [PAUSED]";
-            cout << "\n\n+";
-            for (int i = 0; i < size; i++) cout << "-";
+            clearScreen();
+            setColor(COLOR_CYAN);
+            cout << "+================================================+\n";
+            cout << "|";
+            setColor(COLOR_YELLOW);
+            cout << "       SNAKE GAME - IT603 PROJECT              ";
+            setColor(COLOR_CYAN);
+            cout << "|\n";
+            cout << "+================================================+\n";
+            setColor(COLOR_GREEN);
+            cout << "Score: ";
+            setColor(COLOR_YELLOW);
+            cout << score;
+            setColor(COLOR_GREEN);
+            cout << "  |  High: ";
+            setColor(COLOR_YELLOW);
+            cout << highScore;
+            
+            setColor(COLOR_WHITE);
+            cout << "\n\n";
+            setColor(COLOR_CYAN);
+            cout << "+";
+            for (int i = 0; i < size; i++) cout << "=";
             cout << "+\n";
+            
             for (int i = 0; i < size; i++) {
+                setColor(COLOR_CYAN);
                 cout << "|";
-                for (int j = 0; j < size; j++) cout << grid[i][j];
+                for (int j = 0; j < size; j++) {
+                    if (grid[i][j] == '@') {
+                        setColor(COLOR_RED);
+                        cout << grid[i][j];
+                    } else if (grid[i][j] == '^' || grid[i][j] == 'v' || 
+                               grid[i][j] == '<' || grid[i][j] == '>') {
+                        setColor(COLOR_BRIGHT_GREEN);
+                        cout << grid[i][j];
+                    } else if (grid[i][j] == 'o') {
+                        setColor(COLOR_GREEN);
+                        cout << grid[i][j];
+                    } else {
+                        setColor(COLOR_WHITE);
+                        cout << grid[i][j];
+                    }
+                }
+                setColor(COLOR_CYAN);
                 cout << "|\n";
             }
+            
+            setColor(COLOR_CYAN);
             cout << "+";
-            for (int i = 0; i < size; i++) cout << "-";
-            cout << "+\n\nW/A/S/D or Arrows | P=Pause | ESC=Exit\n";
+            for (int i = 0; i < size; i++) cout << "=";
+            cout << "+\n";
+            setColor(COLOR_MAGENTA);
+            cout << "Controls: W/A/S/D or Arrow Keys | ESC=Exit\n";
+            setColor(COLOR_WHITE);
             first = false;
         } else {
             setCursor(0, 3);
-            cout << "Score: " << score << "  |  High: " << highScore;
-            if (paused) cout << " [PAUSED]  ";
-            else cout << "           ";
+            setColor(COLOR_GREEN);
+            cout << "Score: ";
+            setColor(COLOR_YELLOW);
+            cout << score;
+            setColor(COLOR_GREEN);
+            cout << "  |  High: ";
+            setColor(COLOR_YELLOW);
+            cout << highScore;
+            cout << "           ";
+            setColor(COLOR_WHITE);
+            
             for (int i = 0; i < size; i++) {
                 for (int j = 0; j < size; j++) {
                     if (grid[i][j] != prev[i][j]) {
                         setCursor(j+1, i+6);
-                        cout << grid[i][j];
+                        if (grid[i][j] == '@') {
+                            setColor(COLOR_RED);
+                            cout << grid[i][j];
+                        } else if (grid[i][j] == '^' || grid[i][j] == 'v' || 
+                                   grid[i][j] == '<' || grid[i][j] == '>') {
+                            setColor(COLOR_BRIGHT_GREEN);
+                            cout << grid[i][j];
+                        } else if (grid[i][j] == 'o') {
+                            setColor(COLOR_GREEN);
+                            cout << grid[i][j];
+                        } else {
+                            setColor(COLOR_WHITE);
+                            cout << grid[i][j];
+                        }
                     }
                 }
             }
+            setColor(COLOR_WHITE);
         }
         
         for (int i = 0; i < size; i++)
@@ -206,14 +402,29 @@ public:
     }
     
     void gameOver() {
-        system("cls");
+        sleepMs(500);  // Small delay to show final position
+        clearScreen();
+        hideCursor();
         if (score > highScore) highScore = score;
-        cout << "\n\n==================================================\n";
-        cout << "                  GAME OVER!                     \n";
-        cout << "==================================================\n\n";
-        cout << "    Final Score: " << score << "\n";
-        cout << "    High Score: " << highScore << "\n\n";
+        cout << "\n\n";
+        setColor(COLOR_RED);
+        cout << "+================================================+\n";
+        cout << "|                 GAME OVER!                     |\n";
+        cout << "+================================================+\n\n";
+        setColor(COLOR_YELLOW);
+        cout << "         Final Score: ";
+        setColor(COLOR_CYAN);
+        cout << score << "\n";
+        setColor(COLOR_YELLOW);
+        cout << "         High Score:  ";
+        setColor(COLOR_CYAN);
+        cout << highScore << "\n\n";
+        setColor(COLOR_MAGENTA);
         cout << "    Press R to Restart or Q to Quit\n\n";
+        setColor(COLOR_CYAN);
+        cout << "+================================================+\n";
+        setColor(COLOR_WHITE);
+        fflush(stdout);  // Force output to display immediately
     }
     
     bool isOver() const { return over; }
@@ -226,7 +437,7 @@ public:
         food = new Food();
         food->spawn(*snake, size);
         score = 0;
-        over = paused = false;
+        over = false;
         first = true;
         speed = 100;
         for (int i = 0; i < 25; i++)
@@ -237,18 +448,36 @@ public:
 
 int main() {
     srand(time(0));
+    
+    #ifndef _WIN32
+    enableRawMode();  // Enable raw mode for Linux terminal
+    #endif
+    
     hideCursor();
     Game game(20);
     
-    cout << "==================================================\n";
-    cout << "       Welcome to Snake Game - IT603!           \n";
-    cout << "==================================================\n\n";
+    setColor(COLOR_CYAN);
+    cout << "+================================================+\n";
+    cout << "|";
+    setColor(COLOR_YELLOW);
+    cout << "      Welcome to Snake Game - IT603!           ";
+    setColor(COLOR_CYAN);
+    cout << "|\n";
+    cout << "+================================================+\n\n";
+    setColor(COLOR_WHITE);
     cout << "Instructions:\n";
-    cout << "- W/A/S/D or Arrow Keys to move\n";
-    cout << "- Eat food (*) to grow\n";
-    cout << "- Avoid walls and yourself\n";
-    cout << "- P=Pause | ESC=Exit\n\n";
+    setColor(COLOR_GREEN);
+    cout << "  - Use W/A/S/D or Arrow Keys to move\n";
+    cout << "  - Eat food ";
+    setColor(COLOR_RED);
+    cout << "(@)";
+    setColor(COLOR_GREEN);
+    cout << " to grow longer\n";
+    cout << "  - Avoid hitting walls and yourself\n";
+    cout << "  - Press ESC to Exit\n\n";
+    setColor(COLOR_MAGENTA);
     cout << "Press any key to start...\n";
+    setColor(COLOR_WHITE);
     _getch();
     
     while (true) {
@@ -256,7 +485,7 @@ int main() {
             game.input();
             game.update();
             game.draw();
-            Sleep(game.getSpeed());
+            sleepMs(game.getSpeed());
         } else {
             game.gameOver();
             char c = _getch();
@@ -265,5 +494,10 @@ int main() {
         }
     }
     
+    #ifndef _WIN32
+    disableRawMode();  // Restore terminal on exit
+    #endif
+    
+    setColor(COLOR_WHITE);
     return 0;
 }
