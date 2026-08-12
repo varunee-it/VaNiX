@@ -175,6 +175,13 @@ public:
         return false;
     }
 
+    bool hitOther(const Snake& other) const {
+        Pos h = head();
+        for (const auto& b : other.body)
+            if (b == h) return true;
+        return false;
+    }
+
     bool onPos(Pos p) const {
         for (auto& b : body)
             if (b == p) return true;
@@ -186,10 +193,10 @@ public:
 class Food {
     Pos p;
 public:
-    void spawn(const Snake& s, int size) {
+    void spawn(const Snake& s1, const Snake& s2, int size) {
         while (true) {
             p = Pos(rand() % size, rand() % size);
-            if (!s.onPos(p)) break;
+            if (!s1.onPos(p) && !s2.onPos(p)) break;
         }
     }
     Pos pos() const { return p; }
@@ -197,23 +204,25 @@ public:
 
 // ---------- Game ----------
 class Game {
-    int size, sc, hi, sp;
+    int size, sc, sc2, hi, sp;
     Snake* sn;
+    Snake* sn2;
     Food* fd;
     bool ov;
     HighScoreManager hsManager;
     bool newHighScore;
     
 public:
-    Game(int s) : size(s), sc(0), hi(0), ov(false), newHighScore(false) {
+    Game(int s) : size(s), sc(0), sc2(0), hi(0), ov(false), newHighScore(false) {
 #ifdef _WIN32
-        sp = 15;
+        sp = 305;
 #else
         sp = 150;
 #endif
         sn = new Snake(s / 2, s / 2);
+        sn2 = new Snake(s / 2, (s / 2) + 2);
         fd = new Food();
-        fd->spawn(*sn, size);
+        fd->spawn(*sn, *sn2, size);
         hi = hsManager.loadHighScore();
     }
 
@@ -255,24 +264,47 @@ public:
         } else
 #endif
         {
-            if (key=='w'||key=='W') sn->setDir(UP);
-            else if (key=='s'||key=='S') sn->setDir(DOWN);
-            else if (key=='a'||key=='A') sn->setDir(LEFT);
-            else if (key=='d'||key=='D') sn->setDir(RIGHT);
+            if (key=='w'||key=='W') sn2->setDir(UP);
+            else if (key=='s'||key=='S') sn2->setDir(DOWN);
+            else if (key=='a'||key=='A') sn2->setDir(LEFT);
+            else if (key=='d'||key=='D') sn2->setDir(RIGHT);
         }
     }
 
     void update() {
         if (ov) return;
         sn->move();
+        sn2->move();
         Pos h = sn->head();
+        Pos h2 = sn2->head();
+
+        bool foodSpawn = false;
 
         if (h.x < 0 || h.x >= size || h.y < 0 || h.y >= size) { ov = true; return; }
         if (sn->hitSelf()) { ov = true; return; }
+        if (sn->hitOther(*sn2)) {
+            sc = 0;
+            ov = true;
+            return;
+        }
         if (h == fd->pos()) {
             sn->grow();
             sc += 10;
-            fd->spawn(*sn, size);
+            foodSpawn = true;
+            // fd->spawn(*sn, *sn2, size);
+        }
+        if (h2.x < 0 || h2.x >= size || h2.y < 0 || h2.y >= size) { ov = true; return; }
+        if (sn2->hitSelf()) { ov = true; return; }
+        if(sn2->hitOther(*sn)) { sc2 = 0; ov = true; return; }
+        if (h2 == fd->pos()) {
+            sn2->grow();
+            sc2 += 10;
+            foodSpawn = true;
+            // fd->spawn(*sn, *sn2, size);
+        }
+
+        if(foodSpawn) {
+            fd->spawn(*sn, *sn2, size);
         }
     }
 
@@ -281,8 +313,9 @@ public:
         
         cout << COLOR_BG << COLOR_TEXT << "  =====================================" << COLOR_RESET << "\n";
         cout << COLOR_BG << COLOR_TEXT << "                " << COLOR_TITLE << "🐍 SNAKE GAME 🐍" << COLOR_TEXT << "       " << COLOR_RESET << "\n";
-        cout << COLOR_BG << "            " << COLOR_SCORE << "Score: " << sc << COLOR_TEXT << "   " 
-             << COLOR_HIGHSCORE << "High: " << hi << COLOR_TEXT << "      " << COLOR_RESET << "\n";
+        cout << COLOR_BG << "            " << COLOR_SCORE << "Player1 Score: " << sc << COLOR_TEXT << "\n";
+        cout << COLOR_BG << "            " << COLOR_SCORE << "Player2 Score: " << sc2 << COLOR_TEXT << "\n";
+        // cout << COLOR_HIGHSCORE << "High: " << hi << COLOR_TEXT << "      " << COLOR_RESET << "\n";
         cout << COLOR_BG << COLOR_TEXT << "  =====================================" << COLOR_RESET << "\n\n";
 
         cout << "  " << COLOR_WALL;
@@ -295,10 +328,11 @@ public:
             for (int x=0;x<size;x++) {
                 Pos current(x, y);
                 bool isSnake = false;
+                bool isSnail = false;
                 bool isHead = false;
                 bool isFood = false;
                 
-                if (sn->head() == current) {
+                if (sn->head() == current || sn2->head() == current) {
                     isHead = true;
                 } else if (fd->pos() == current) {
                     isFood = true;
@@ -309,12 +343,22 @@ public:
                             break;
                         }
                     }
+                    if (!isSnake) {
+                        for (auto& b : sn2->getBody()) {
+                            if (b == current) {
+                                isSnail = true;
+                                break;
+                            }
+                        }
+                    }
                 }
                 
                 if (isHead) {
                     cout << "🐍";
                 } else if (isSnake) {
                     cout << "🟢";
+                } else if (isSnail) {
+                    cout << "🟡";
                 } else if (isFood) {
                     cout << "🍎";
                 } else {
@@ -355,14 +399,15 @@ public:
     void end() {
         system(CLEAR);
         newHighScore = hsManager.updateHighScore(sc, hi);
+        newHighScore = hsManager.updateHighScore(sc2, hi);
 
         cout << COLOR_BG << "\n\n";
         cout << "    " << COLOR_TEXT << "=====================================" << COLOR_RESET << "\n";
         cout << "            " << COLOR_GAMEOVER << "     GAME OVER! 💀" << COLOR_RESET << "        \n";
         cout << "    " << COLOR_TEXT << "=====================================" << COLOR_RESET << "\n\n";
-        cout << COLOR_TEXT << "              Final Score: " << COLOR_SCORE << sc << COLOR_RESET << "\n";
+        cout << COLOR_TEXT << "              Winner: " << COLOR_SCORE << (sc == sc2 ? "Draw" : sc > sc2 ? "Player 1" : "Player 2") << COLOR_RESET << "\n";
         cout << COLOR_TEXT << "              High Score:  " << COLOR_HIGHSCORE << hi << COLOR_RESET << "\n\n";
-        if (newHighScore && sc > 0) 
+        if (newHighScore && (sc > 0 || sc2 > 0)) 
             cout << "         " << COLOR_HIGHSCORE << "  🏆 NEW HIGH SCORE! 🏆" << COLOR_RESET << "\n\n";
         
         cout << COLOR_TEXT << "          [" << COLOR_CONTROLS << "R" << COLOR_TEXT << "] Restart  |  [" 
@@ -376,7 +421,7 @@ public:
         system(CLEAR);
         cout << COLOR_BG << "\n\n";
         cout << "    " << COLOR_TEXT << "=====================================" << COLOR_RESET << "\n";
-        cout << "               " << COLOR_TITLE << "🐍 SNAKE GAME 🐍" << COLOR_RESET << "        \n";
+        cout << "               " << COLOR_TITLE << "🐍  SNAKE GAME 🐍" << COLOR_RESET << "        \n";
         cout << "    " << COLOR_TEXT << "=====================================" << COLOR_RESET << "\n\n";
         
         cout << "        " << COLOR_HIGHSCORE << "      🏆 High Score: " << hi << COLOR_RESET << "\n\n";
@@ -391,11 +436,12 @@ public:
         delete sn;
         delete fd;
         sn = new Snake(size/2, size/2);
+        sn2 = new Snake(size/2, (size/2) + 2);
         fd = new Food();
-        fd->spawn(*sn, size);
+        fd->spawn(*sn, *sn2, size);
         sc = 0;
 #ifdef _WIN32
-        sp = 15;
+        sp = 305;
 #else
         sp = 150;
 #endif
