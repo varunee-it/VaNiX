@@ -182,15 +182,35 @@ public:
     }
 };
 
-// ---------- Food ----------
-class Food {
-    Pos p;
+// ---------- PositionSource Seam ----------
+class PositionSource {
 public:
-    void spawn(const Snake& s, int size) {
+    virtual ~PositionSource() {}
+    virtual Pos next(const Snake& s, int size) = 0;
+};
+
+class DefaultPositionSource : public PositionSource {
+public:
+    Pos next(const Snake& s, int size) override {
+        Pos p;
         while (true) {
             p = Pos(rand() % size, rand() % size);
             if (!s.onPos(p)) break;
         }
+        return p;
+    }
+};
+
+// ---------- Food ----------
+class Food {
+    Pos p;
+public:
+    void spawn(const Snake& s, int size, PositionSource& src) {
+        p = src.next(s, size);
+    }
+    void spawn(const Snake& s, int size) {
+        DefaultPositionSource defSrc;
+        spawn(s, size, defSrc);
     }
     Pos pos() const { return p; }
 };
@@ -203,21 +223,35 @@ class Game {
     bool ov;
     HighScoreManager hsManager;
     bool newHighScore;
+    PositionSource* posSource;
+    bool ownPosSource;
     
 public:
-    Game(int s) : size(s), sc(0), hi(0), ov(false), newHighScore(false) {
+    Game(int s, PositionSource* src = nullptr) 
+        : size(s), sc(0), hi(0), ov(false), newHighScore(false) {
 #ifdef _WIN32
         sp = 15;
 #else
         sp = 150;
 #endif
+        if (src) {
+            posSource = src;
+            ownPosSource = false;
+        } else {
+            posSource = new DefaultPositionSource();
+            ownPosSource = true;
+        }
         sn = new Snake(s / 2, s / 2);
         fd = new Food();
-        fd->spawn(*sn, size);
+        fd->spawn(*sn, size, *posSource);
         hi = hsManager.loadHighScore();
     }
 
-    ~Game() { delete sn; delete fd; }
+    ~Game() {
+        delete sn;
+        delete fd;
+        if (ownPosSource) delete posSource;
+    }
 
     void input() {
         if (!kbhit()) return;
@@ -272,9 +306,11 @@ public:
         if (h == fd->pos()) {
             sn->grow();
             sc += 10;
-            fd->spawn(*sn, size);
+            fd->spawn(*sn, size, *posSource);
         }
     }
+
+    int score() const { return sc; }
 
     void draw() const {
         cout << "\033[H";
